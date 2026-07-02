@@ -9,6 +9,7 @@ Copy this repository into a Codex skills directory:
 ```bash
 cp -R naver-blog-crosspost ~/.codex/skills/naver-blog-crosspost
 ```
+<img width="329" height="54" alt="image" src="https://github.com/user-attachments/assets/b7c24d4a-7999-441c-b7bc-c528603cf272" />
 
 For OpenClaw, copy the same directory into the OpenClaw skill roots used by the active agent.
 
