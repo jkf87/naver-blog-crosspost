@@ -20,6 +20,7 @@ Invoke the skill with a source article URL:
 ```text
 $naver-blog-crosspost https://example.com/article
 ```
+<img width="574" height="69" alt="image" src="https://github.com/user-attachments/assets/63bb99ad-38b4-4b89-8756-dcd14930e774" />
 
 When the user asks to publish or deploy, the skill is allowed to click the final Naver `발행` confirmation button and must verify the public post URL afterward. For draft-only requests, it stops before final publish or saves a draft.
 
