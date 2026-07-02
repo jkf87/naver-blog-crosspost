@@ -1,0 +1,4 @@
+interface:
+  display_name: "Naver Blog Crosspost"
+  short_description: "Cross-post web articles to Naver Blog"
+  default_prompt: "Use $naver-blog-crosspost to publish this article URL to Naver Blog."
