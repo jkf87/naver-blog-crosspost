@@ -1,101 +1,121 @@
 ---
-name: naver-blog-crosspost
-description: Cross-post a published web article into Naver Blog from Chrome, especially from Quartz, GitHub Pages, or another existing blog/article URL. Use when the user asks to copy, mirror, draft, or publish an existing article to Naver Blog, preserve the source title/body/images, reconstruct Naver tags, handle login-expired draft recovery, handle the Smart Editor publish dialog, or repeat the recorded Naver Blog posting workflow.
+name: "naver-blog-crosspost"
+description: "Cross-post to Naver Blog via logged-in Windows Chrome and repair Smart Editor state."
 ---
 
 # Naver Blog Crosspost
 
-Use this skill to turn an existing published article page into a Naver Blog post through the user's logged-in browser. Prefer semantic browser/Computer Use actions over coordinate replay. Treat images as first-class content, not decoration.
-
-## Source Evidence
-
-The recorded workflow showed this reusable pattern:
-
-1. Open Naver, enter Blog, then choose `글쓰기`.
-2. Open the source article in another Chrome tab.
-3. Copy the source article title, body, source link, and images into Naver Smart Editor.
-4. Open Naver's `발행` panel, set/check category and visibility.
-5. Copy source tags, normalize them for Naver, enter each tag in `태그 입력`.
-6. Click final `발행` and wait for a publish state.
-
-Do not hardcode the recorded account, blog URL, category, article title, or tags as defaults.
+Use this skill to turn an existing published article page into a Naver Blog post through the user's logged-in browser. When the user asks to use the already-open Windows Chrome, do exactly that; do not substitute WSL/Linux Chrome or a fresh automation-only browser unless the user changes the requirement.
 
 ## Workflow
 
-1. Confirm the task boundary.
-   - If the user says publish/cross-post, final publishing is allowed.
-   - If the user explicitly asks to publish/deploy, do not stop at the publish panel asking the user to click the last `발행`; complete the final click yourself and then verify the public post.
-   - If the user says draft/prepare/copy, stop before the final publish button or use `저장`.
-   - If no source URL is provided, use the currently focused/selected article page only when it is unambiguous; otherwise ask for the URL.
+1. Confirm the boundary.
+   - If the user asks to publish/cross-post, final publishing is allowed.
+   - If the user asks only to draft/prepare/copy, stop before final `발행` or use `저장`.
+   - If no source URL is provided, use the focused article page only when unambiguous.
 
-2. Collect source content.
-   - Use Chrome state when available; otherwise use Computer Use.
-   - Capture the source URL, page title, article body, tags, and every meaningful article image.
-   - Prefer page-visible article content over navigation/sidebar text.
-   - For Quartz/GitHub Pages pages, tags are often shown as `#Tag-One#Tag-Two`; extract them separately from the article body.
-   - Resolve relative image URLs against the source URL. Download source images to a temporary work folder before opening Naver so they can be re-uploaded if rich paste drops them.
-   - Keep an image manifest: original URL, local file path, and intended insertion point or nearby heading.
+2. Attach to the correct browser.
+   - For this user's Windows/WSL OpenClaw setup, first use OpenClaw browser with `target="node"`, `node="WindowsBrowserHost"`, `profile="user"`.
+   - Good status signs: `driver: existing-session`, `transport: chrome-mcp`, `running: true`, `cdpReady: true`, `pageReady: true`, and detected `C:\Program Files\Google\Chrome\Application\chrome.exe`.
+   - If Chrome/CDP are alive but `pageReady` is false, call browser `action="start"` with the same target/node/profile to reattach.
+   - List tabs before opening new ones. Reuse current Naver/write/source tabs when clearly related.
+   - If `act` rejects a stable handle like `t13` with `action targetId must match request targetId`, retry with that tab's raw `targetId` from `tabs`.
+   - When using raw Chrome DevTools Protocol instead of OpenClaw browser, prefer the already-open Chrome browser-level WebSocket URL. Run `node scripts/chrome_cdp_endpoint.mjs --url` to read `DevToolsActivePort` and construct it.
+   - If `/json/version` or `/json/list` is 404, do not treat that alone as fatal. Chrome may still be reachable via the two-line `DevToolsActivePort` file.
 
-3. Prepare the Naver Blog editor.
-   - In the logged-in Chrome session, open Naver Blog and choose `글쓰기`, or navigate to the user's Naver Blog write page if it is already open.
-   - Wait until the Smart Editor shows the title/body entry area and the toolbar is stable.
-   - If an old draft or unsaved post appears, do not overwrite it without a clear user request.
+3. Collect source content.
+   - Capture source URL, title, article body, tags, and every meaningful article image.
+   - Prefer the visible article content, not navigation/sidebar text.
+   - For GitHub Pages/Quartz pages, extract compact hashtag lists separately from body text.
+   - Resolve relative image URLs, download images to a work folder, and keep an image manifest.
 
-4. Fill title and body.
-   - Paste the article title into the title field.
-   - Paste the body into the Smart Editor body area.
-   - Preserve headings, paragraphs, lists, tables, images, and links when the editor accepts rich paste.
-   - If rich paste fails, paste clean text and preserve structure with headings and spacing.
-   - Insert or upload the downloaded images after the surrounding text is in place. Do not finish a publish request with missing images unless the user explicitly says to omit them.
-   - Add a final source attribution line when the original source URL is not already preserved as a link.
+4. Compose in Naver Smart Editor.
+   - Open Naver Blog in the logged-in Chrome session and choose `글쓰기`, or use an already-open write tab.
+   - Preserve headings, paragraphs, lists, tables, images, and links by rich paste when possible.
+   - Prefer real editor input events. Direct DOM mutation can make the page look correct while Naver's internal model remains stale.
+   - Add a final source attribution line when the source URL is not already preserved.
 
-5. Add tags.
-   - Run `scripts/normalize_naver_tags.py` on copied/source tags when they are compact, hashtagged, or hyphenated.
-   - Enter one normalized tag at a time in `태그 입력`, committing each tag with Space or Enter as the editor requires.
-   - Verify the tag chips appear in the publish panel. Do not leave a single concatenated tag such as `LLMCodingAgentRewardDesign`.
-   - If a restored draft loses tags, re-enter all tags before publishing.
+5. Verify and repair Smart Editor's internal model before publishing.
+   - Naver Smart Editor exposes an instance under `SmartEditor._editors.<id>` inside the write-page iframe.
+   - Use model APIs for checks:
 
-6. Publish or save.
+```javascript
+const w = document.querySelector('iframe').contentWindow;
+const ed = w.SmartEditor._editors[Object.keys(w.SmartEditor._editors)[0]];
+const data = ed.getDocumentData();
+const title = ed.getDocumentTitle();
+const text = ed.getContentText();
+const images = ed.getComponentsByCtype ? ed.getComponentsByCtype('image') : [];
+```
+
+   - Confirm the internal title matches the intended title, the body starts cleanly, the source URL is present, and the image count matches the source.
+   - If the visible editor looks correct but the final `발행` button does nothing, suspect internal model drift instead of repeatedly clicking.
+   - If necessary, repair `data.document.components` and call `ed.setDocumentData(data)`. Use this only for authorized content and never to bypass login, captcha, account protections, or consent.
+   - Common repairs: remove stray leading keystrokes such as `v`; restore a dropped first character; remove duplicated trailing title text; add or move source attribution; verify image components remain present.
+
+6. Add tags.
+   - Run `scripts/normalize_naver_tags.py` on compact/source tags.
+   - Enter tags one at a time in `태그 입력`, committing with Space or Enter.
+   - Verify separate tag chips. Do not leave one concatenated tag.
+
+7. Publish.
    - Open the `발행` panel.
-   - Check category, visibility, comment/scrap/search options, and `이 설정을 기본값으로 유지`.
-   - When multiple `발행` buttons are visible, click the final confirmation button inside the publish panel, not the toolbar button that merely opens the panel.
-   - For publish requests, click the final `발행`, wait for `발행 중입니다` to clear, then verify the result by observing the published post URL or success page.
-   - For draft requests, save and report that no final publish action was taken.
+   - Check category, visibility, comment/share/search settings, and default-setting checkbox.
+   - Click the final confirmation `발행` inside the panel, not the toolbar `발행` that merely opens the panel.
+   - If a `beforeunload` dialog appears after final publish, accept only when it is part of confirmed publish navigation or after state is verified.
+   - Wait for a public Naver post URL/PostView state.
 
-## Login, Draft, and Tool Recovery
+## Recovery Notes
 
-- If Naver shows `로그인이 필요합니다` after the final publish click, click the confirmation, use the already-saved browser login state when available, then reopen the Naver write URL.
-- If Naver shows `작성 중인 글이 있습니다`, restore the draft and re-check the body, images, tags, visibility, and publish options. Draft restoration may preserve images but lose tags.
-- If browser control disconnects after the publish panel is ready, reconnect to Chrome, claim the open `PostWriteForm.naver` tab, and continue from the visible editor state instead of reopening, refreshing, or rebuilding the post.
-- If browser automation stalls, avoid destructive actions such as refresh, tab close, or Chrome restart. Check whether the macOS front app is `loginwindow`; if the screen is locked, report that publishing cannot continue until the screen is unlocked.
-- If Computer Use is unavailable but Chrome DevTools is reachable, use it only for inspection or safe DOM interaction. Do not bypass Naver login, captcha, or account protections.
+- If login expires, use the logged-in browser state and restore the draft. Re-check body/images/tags/options after restoration.
+- If browser control disconnects after the panel is ready, reconnect to the existing Chrome session and claim the open write tab. Avoid refresh, tab close, Chrome restart, or profile switching unless the user explicitly asks.
+- If `Windows Node (DESKTOP-HK1F7D6)` cannot expose `browser.proxy`, `file.fetch`, or `node_exec`, switch the automation route to `WindowsBrowserHost` before asking the user to restart Chrome.
 
-## Image Checklist
+## Chrome CDP Helper
 
-For each source image:
+Use the bundled helper when the logged-in Chrome has remote debugging enabled and you need a browser-level CDP WebSocket URL:
 
-1. Download or otherwise capture it before composing.
-2. Insert it into the correct part of the Smart Editor body.
-3. Visually or structurally verify it appears in the restored editor before final publish.
-4. After publish, open the public post and verify that the image count and major image content match the source.
+```bash
+node scripts/chrome_cdp_endpoint.mjs --url
+```
+
+The helper first honors `CHROME_CDP_WS_URL`. Otherwise it reads `DevToolsActivePort` from `CHROME_USER_DATA_DIR`, or from Chrome's default user-data directory. On Windows, the default is `%LOCALAPPDATA%\Google\Chrome\User Data`, so the workflow does not hardcode a username. Use `CHROME_CDP_HOST` when the endpoint host is not `127.0.0.1`.
 
 ## Validation
 
-Before reporting success:
+Before reporting success, verify the public post:
 
-- Verify title and body are present in the Naver editor or published post.
-- Verify all meaningful source images are present in the editor or published post.
-- Verify tags are separate chips and reasonably match the source tags.
-- Verify the final state matches the user's request: draft saved, publish panel ready, or post published.
-- Report the public Naver Blog URL after publishing.
-- Report any content that could not transfer cleanly, especially images, embeds, tables, or links.
+- URL is the intended Naver post URL.
+- Title and body are present.
+- Body start is clean and not prefixed by accidental keystrokes.
+- No duplicated title block remains in the body.
+- Source URL appears if attribution was intended.
+- All meaningful source images are present.
+- Tags are separate chips and match source tags reasonably.
+
+Useful published-post check:
+
+```javascript
+const root = document.querySelector('iframe')?.contentDocument || document;
+const text = root.body.innerText;
+const imgs = Array.from(root.querySelectorAll('img')).filter(img =>
+  img.naturalWidth > 100 && img.naturalHeight > 100 &&
+  !/profile|banner|promo|logo|spc|static\/blog/i.test(img.currentSrc || img.src || '')
+);
+({
+  titlePresent: text.includes(expectedTitle),
+  bodyStartsClean: text.includes(expectedFirstSentence) && !text.includes('v' + expectedFirstSentence),
+  duplicateTitlePair: text.includes(expectedTitle + expectedTitle),
+  sourcePresent: text.includes(sourceUrl),
+  imageCount: imgs.length,
+  tagCount: (text.match(/#\S+/g) || []).length
+});
+```
 
 ## Tag Helper
-
-Use the helper to transform source tags:
 
 ```bash
 python3 scripts/normalize_naver_tags.py 'LLM#Coding-Agent#Reinforcement-Learning#Reward-Design#Verification#Qwen'
 ```
 
-The default output removes leading `#`, removes hyphens, de-duplicates tags, and prints a space-separated sequence suitable for Naver tag entry.
+The helper removes leading `#`, removes hyphens, de-duplicates tags, and prints a space-separated sequence suitable for Naver tag entry.
